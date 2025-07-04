@@ -2,7 +2,7 @@ import sqlite3
 import pandas as pd
 import random
 from openpyxl import Workbook
-from openpyxl.styles import Border, Side, Font, PatternFill
+from openpyxl.styles import Border, Side, Font, PatternFill, Alignment
 # Connect to your SQLite DB
 conn = sqlite3.connect('ZK.db')  # Change this to your DB path
 
@@ -220,6 +220,12 @@ ORDER BY employee_id, Date;
 
 """
 df = pd.read_sql_query(query, conn)
+
+# Get company name for title
+title_query = "SELECT cmp_name FROM hr_company LIMIT 1;"
+title_df = pd.read_sql_query(title_query, conn)
+company_name = title_df.iloc[0]['cmp_name'] if not title_df.empty else "Company Name"
+
 conn.close()
 
 # Columns to sum
@@ -257,30 +263,44 @@ bright_red_font = Font(name='Tahoma', size=10, color='FF0000')
 # Create orange fill for suspicious punch pattern rows
 orange_fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
 
+# Create title font
+title_font = Font(name='Tahoma', size=22, bold=True)
+
+# Create subtitle font
+subtitle_font = Font(name='Tahoma', size=14, bold=True)
+
 current_row = 1
+
+# Add company name title at the top
+ws.cell(row=current_row, column=1, value=company_name).font = title_font
+current_row += 2  # Add 1 empty row of space after title
+
+# Add subtitle
+ws.cell(row=current_row, column=1, value="Monthly Statement Report").font = subtitle_font
+current_row += 2  # Add 1 empty row of space after subtitle
+
+# Write column headers only once
+cols_to_show = ['Date', 'Workday', 'Timetable', 'EYEE NAME', 'StartWorkTime', 'EndWorkTime', 'Clock-In', 'Clock-Out', 'In', 'Out', 'Required Work Time', 'Break', 'Late Clock In', 'Early Clock In', 'Early Clock Out', 'Work Time', 'Absent', 'Penalty', 'OT1', 'OT2', 'OT3', 'Night Shift', 'Allowence', 'Total Base', 'Day', 'H', 'MC', 'AL', 'UP', 'S', 'Total Day']
+for col_idx, col_name in enumerate(cols_to_show, start=1):
+    header_cell = ws.cell(row=current_row, column=col_idx, value=col_name)
+    header_cell.font = tahoma_bold_font
+    header_cell.alignment = Alignment(wrap_text=True)
+ws.row_dimensions[current_row].height = 39.75
+current_row += 1
 
 for emp_id, group in df.groupby('employee_id'):
     emp_info = group.iloc[0]
 
-    # Write employee header
+    # Write employee info in single row format
     ws.cell(row=current_row, column=1, value="Employee ID").font = tahoma_bold_font
     ws.cell(row=current_row, column=2, value=emp_id).font = tahoma_font
     ws.cell(row=current_row, column=3, value="Full Name").font = tahoma_bold_font
     ws.cell(row=current_row, column=4, value=emp_info['full_name']).font = tahoma_font
-    ws.cell(row=current_row, column=5, value="Department").font = tahoma_bold_font
-    ws.cell(row=current_row, column=6, value=emp_info['department']).font = tahoma_font
-    ws.row_dimensions[current_row].height = 26.5
+    ws.row_dimensions[current_row].height = 18
     current_row += 1
-
-    # Write column headers
-    cols_to_show = ['Date', 'Workday', 'Timetable', 'StartWorkTime', 'EndWorkTime', 'Clock-In', 'Clock-Out', 'In', 'Out', 'Required Work Time', 'Break', 'Late Clock In', 'Early Clock In', 'Early Clock Out', 'Work Time', 'Absent', 'Penalty', 'OT1', 'OT2', 'OT3', 'Night Shift', 'Allowence', 'Total Base', 'Day', 'H', 'MC', 'AL', 'UP', 'S', 'Total Day']
-    for col_idx, col_name in enumerate(cols_to_show, start=1):
-        ws.cell(row=current_row, column=col_idx, value=col_name).font = tahoma_bold_font
-    ws.row_dimensions[current_row].height = 26.5
 
     # Write data rows
     for _, row in group.iterrows():
-        current_row += 1
         is_sunday = row.get('Workday') == 'Sun.'
         
         # Function to convert time string to minutes for comparison
@@ -325,7 +345,9 @@ for emp_id, group in df.groupby('employee_id'):
         
         for col_idx, col_name in enumerate(cols_to_show, start=1):
             # Set value based on column name
-            if col_name == 'Penalty':
+            if col_name == 'EYEE NAME':
+                cell_value = emp_info['full_name']
+            elif col_name == 'Penalty':
                 cell_value = '0.0'
             elif col_name == 'Night Shift':
                 # Check if Timetable contains "NIGHT"
@@ -424,10 +446,10 @@ for emp_id, group in df.groupby('employee_id'):
                     cell.fill = light_orange_fill
             elif is_sunday:
                 cell.fill = yellow_fill
-        ws.row_dimensions[current_row].height = 26.5
+        ws.row_dimensions[current_row].height = 18
+        current_row += 1
 
     # Write total row
-    current_row += 1
     ws.cell(row=current_row, column=1, value="TOTAL").font = tahoma_bold_font
     for col_idx, col_name in enumerate(cols_to_show, start=1):
         if col_name in sum_columns:
@@ -505,13 +527,13 @@ for emp_id, group in df.groupby('employee_id'):
         elif col_idx > 1:  # Don't override the TOTAL label in column 1
             # Apply regular font to empty cells in total row (except column 1)
             ws.cell(row=current_row, column=col_idx, value="").font = tahoma_font
-    ws.row_dimensions[current_row].height = 26.5
+    ws.row_dimensions[current_row].height = 18
 
     # Add one empty row after each employee
     current_row += 2
 
-# Apply border to all cells
-for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=len(cols_to_show)):
+# Apply border to all cells with data (excluding title rows)
+for row in ws.iter_rows(min_row=5, max_row=ws.max_row, min_col=1, max_col=len(cols_to_show)):
     for cell in row:
         cell.border = thin_border
 
