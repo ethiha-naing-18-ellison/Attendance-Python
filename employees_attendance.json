@@ -1,0 +1,260 @@
+[
+    {
+        "employeeid": "Sun.",
+        "fullname": "ROF",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "KHIN WIN",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "KIBRIA",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "SHAMIN",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "MONIR HOSEN",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "SABBIR",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "MD NAZRUL",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "ASHOK",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "KAMLESH",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "MENDRA",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "RAVI",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "PYAE SONE AUNG",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "MOHAMMAD SURUJ",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "KYAW KYAW",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "NAH YU WAI",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "NASIR MIAH",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "HABIJUR RAHMAN",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "NAY LIN PHONE",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "ABDUR RABBI",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "JUBAIR ABIR",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "MINTU",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "JAHID MOLLA",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "AUNG MOE HEIN",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "IBRAHIM",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "GOH CHOON MOOI",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "AUNG SAN MOE",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "SELIM MOLLA",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "HAFIZUR RAHMAN",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "MOBARAK",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "KHANT KYAW THU",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "KYAW YE AUNG",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "JUJEL MOHAMMAD",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "MD RUHUL AMIN",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "JAHID HASAN",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "MIAH SARKER",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "SUBIR PATRA",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "MUHAMAD SYUKURI",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "RABI ULLAH",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "HAQUE MD ASHRAFUL",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "ALI RAZON",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "PYAE PHYO HEIN",
+        "Department": "16:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "RASHIDUL ISLAM",
+        "Department": "04:30",
+        "Attendance": []
+    },
+    {
+        "employeeid": "Sun.",
+        "fullname": "AMINUR ISLAM",
+        "Department": "04:30",
+        "Attendance": []
+    }
+]
