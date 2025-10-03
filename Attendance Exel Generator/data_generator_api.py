@@ -12,6 +12,95 @@ from typing import Optional
 
 app = FastAPI(title="Attendance Data Sheet Generator", version="1.0.0")
 
+def filter_last_two_punches(df):
+    """
+    Check ALL consecutive punch pairs in each row.
+    Different logic for first half vs second half:
+    
+    FIRST HALF (positions 0-3): Keep FIRST punch (earlier time)
+    - Punch 1 → Punch 2: If < 10 min, keep Punch 1, remove Punch 2
+    - Punch 2 → Punch 3: If < 10 min, keep Punch 2, remove Punch 3
+    - Punch 3 → Punch 4: If < 10 min, keep Punch 3, remove Punch 4
+    
+    SECOND HALF (positions 4-5): Keep SECOND punch (later time)
+    - Punch 4 → Punch 5: If < 10 min, keep Punch 5, remove Punch 4
+    - Punch 5 → Punch 6: If < 10 min, keep Punch 6, remove Punch 5
+    
+    Example:
+    Input:  08:30, 08:32, 12:00, 20:06, 20:07
+            ^^^^^^^^^^^^^ Keep 08:30 (first)
+                                ^^^^^^^^^^^^^ Keep 20:07 (second)
+    Output: 08:30, 12:00, 20:07
+    """
+    def time_to_seconds(time_str):
+        """Convert HH:MM time to seconds"""
+        if not time_str or pd.isna(time_str) or time_str == '':
+            return None
+        try:
+            parts = str(time_str).split(':')
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            return hours * 3600 + minutes * 60
+        except:
+            return None
+    
+    punch_cols = ['punch_1', 'punch_2', 'punch_3', 'punch_4', 'punch_5', 'punch_6']
+    
+    # Process each row
+    for idx in df.index:
+        # Keep checking until no more duplicates found
+        changed = True
+        while changed:
+            changed = False
+            
+            # Collect all non-empty punches
+            punches = []
+            for col in punch_cols:
+                punch_value = df.loc[idx, col]
+                if punch_value and not pd.isna(punch_value) and str(punch_value).strip() != '':
+                    punches.append(punch_value)
+            
+            # Check each consecutive pair
+            for i in range(len(punches) - 1):
+                current_time = punches[i]
+                next_time = punches[i + 1]
+                
+                # Convert to seconds
+                current_seconds = time_to_seconds(current_time)
+                next_seconds = time_to_seconds(next_time)
+                
+                # Check if both are valid and less than 10 minutes (600 seconds) apart
+                if current_seconds is not None and next_seconds is not None:
+                    time_diff = abs(next_seconds - current_seconds)
+                    
+                    # If less than 10 minutes apart, it's a duplicate
+                    if time_diff < 600:
+                        # Decide which punch to remove based on position
+                        # First half (positions 0-3): Keep first punch (remove second)
+                        # Second half (positions 4-5): Keep second punch (remove first)
+                        
+                        if i < 3:  # First half: positions 0→1, 1→2, 2→3
+                            # Keep current (first), remove next (second)
+                            punches.pop(i + 1)
+                        else:  # Second half: positions 3→4, 4→5
+                            # Keep next (second), remove current (first)
+                            punches.pop(i)
+                        
+                        changed = True
+                        break  # Start checking again from the beginning
+            
+            # Rebuild the punch sequence without duplicates
+            # Clear all punch columns first
+            for col in punch_cols:
+                df.loc[idx, col] = None
+            
+            # Reassign cleaned punches
+            for i, punch in enumerate(punches):
+                if i < len(punch_cols):
+                    df.loc[idx, punch_cols[i]] = punch
+    
+    return df
+
 @app.post("/generate-data-sheet")
 async def generate_data_sheet(
     db_file: UploadFile = File(..., description="ZK.db SQLite database file"),
@@ -155,6 +244,9 @@ async def generate_data_sheet(
         company_name = title_df.iloc[0]['cmp_name'] if not title_df.empty else "Company Name"
         
         conn.close()
+        
+        # Apply 10-minute rule to LAST two punches (check for duplicate at end)
+        raw_punch_df = filter_last_two_punches(raw_punch_df)
         
         # Generate Excel file
         output_file = create_data_excel(raw_punch_df, company_name, start_date, end_date)
