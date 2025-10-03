@@ -288,6 +288,9 @@ def create_data_excel(raw_punch_df, company_name, start_date, end_date):
     header_fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
     yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
     
+    # Blue fill for employee separator rows
+    blue_fill = PatternFill(start_color='B8CCE4', end_color='B8CCE4', fill_type='solid')  # Light blue
+    
     current_row = 1
     
     # Add company name title
@@ -329,7 +332,20 @@ def create_data_excel(raw_punch_df, company_name, start_date, end_date):
     
     # Write data rows
     if not raw_punch_df.empty:
+        current_employee = None
         for _, row in raw_punch_df.iterrows():
+            # Check if this is a new employee
+            if current_employee is not None and current_employee != row.get('employee_id', ''):
+                # Add blue separator row between employees
+                for col_idx in range(1, len(headers) + 1):
+                    cell = ws.cell(row=current_row, column=col_idx, value='')
+                    cell.fill = blue_fill
+                    cell.border = thin_border
+                ws.row_dimensions[current_row].height = 5  # Thin separator
+                current_row += 1
+            
+            # Update current employee
+            current_employee = row.get('employee_id', '')
             # Check if Sunday for yellow highlighting
             date_str = str(row.get('Date', ''))
             try:
