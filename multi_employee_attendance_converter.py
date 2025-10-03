@@ -259,7 +259,7 @@ def main():
     Main function to convert multi-employee attendance Excel to JSON
     """
     # Input and output files
-    excel_file = "RSP-2025-05-MonthlySummaryReport - Copy.xls"
+    excel_file = "attendance_report_6551.xlsx"
     output_file = "employees_attendance.json"
     
     print("🚀 MULTI-EMPLOYEE ATTENDANCE CONVERTER")

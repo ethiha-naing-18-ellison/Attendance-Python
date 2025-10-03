@@ -15,27 +15,26 @@ app = FastAPI(title="Attendance Report Generator", version="1.0.0")
 @app.post("/generate-attendance-report")
 async def generate_attendance_report(
     db_file: UploadFile = File(..., description="ZK.db SQLite database file"),
-    start_date: str = Form(..., description="Start date in YYYY-MM format (e.g., 2025-06)"),
-    end_date: Optional[str] = Form(None, description="End date in YYYY-MM format (optional, defaults to start_date)")
+    start_date: str = Form(..., description="Start date in YYYY-MM-DD format (e.g., 2025-06-01)"),
+    end_date: Optional[str] = Form(None, description="End date in YYYY-MM-DD format (optional, defaults to start_date)")
 ):
     """
     Generate Excel attendance report from ZK.db file for specified date range.
     
     Parameters:
     - db_file: ZK.db SQLite database file
-    - start_date: Start date in YYYY-MM format
-    - end_date: End date in YYYY-MM format (optional)
+    - start_date: Start date in YYYY-MM-DD format
+    - end_date: End date in YYYY-MM-DD format (optional)
     """
     
     # Validate date format
     try:
-        datetime.strptime(start_date, "%Y-%m")
+        datetime.strptime(start_date, "%Y-%m-%d")
         if end_date:
-            datetime.strptime(end_date, "%Y-%m")
-        else:
-            end_date = start_date
+            datetime.strptime(end_date, "%Y-%m-%d")
+        # If end_date is not provided, we'll set it to the latest date in database later
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM format.")
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD format.")
     
     # Validate file type
     if not db_file.filename.endswith('.db'):
@@ -51,17 +50,71 @@ async def generate_attendance_report(
         # Connect to the temporary database
         conn = sqlite3.connect(temp_db_path)
         
-        # Modified SQL query to use date parameters
+        # If end_date is not provided, find the latest date in the database
+        if not end_date:
+            max_date_query = """
+            SELECT MAX(date(punch_time)) as max_punch_date
+            FROM att_punches
+            UNION
+            SELECT MAX(date(att_date)) as max_att_date
+            FROM att_day_details
+            ORDER BY max_punch_date DESC
+            LIMIT 1
+            """
+            max_date_result = pd.read_sql_query(max_date_query, conn)
+            if not max_date_result.empty and max_date_result.iloc[0]['max_punch_date']:
+                end_date = max_date_result.iloc[0]['max_punch_date']
+                print(f"DEBUG: end_date was empty, set to latest database date: {end_date}")
+            else:
+                # Fallback to start_date if no data found
+                end_date = start_date
+                print(f"DEBUG: No data found in database, using start_date as end_date: {end_date}")
+        
+        # Modified SQL query to use date parameters and include all dates in range
         query = f"""
-        WITH punches_per_day AS (
+        WITH RECURSIVE date_range AS (
+            SELECT '{start_date}' AS date_value
+            UNION ALL
+            SELECT date(date_value, '+1 day')
+            FROM date_range
+            WHERE date_value < '{end_date}'
+        ),
+
+        employees_in_period AS (
+            SELECT DISTINCT e.id as employee_id, e.emp_pin, e.emp_firstname, e.emp_lastname, e.department_id
+            FROM hr_employee e
+            WHERE e.id IN (
+                SELECT DISTINCT employee_id 
+                FROM att_punches 
+                WHERE date(punch_time) >= '{start_date}' AND date(punch_time) <= '{end_date}'
+                UNION
+                SELECT DISTINCT employee_id 
+                FROM att_day_details 
+                WHERE date(att_date) >= '{start_date}' AND date(att_date) <= '{end_date}'
+            )
+        ),
+
+        all_employee_dates AS (
+            SELECT 
+                ep.employee_id,
+                ep.emp_pin,
+                ep.emp_firstname, 
+                ep.emp_lastname,
+                ep.department_id,
+                dr.date_value as punch_date
+            FROM date_range dr
+            CROSS JOIN employees_in_period ep
+        ),
+
+        punches_per_day AS (
             SELECT 
                 p.employee_id,
                 date(p.punch_time) AS punch_date,
                 time(p.punch_time) AS punch_time,
                 p.punch_time AS full_punch_time
             FROM att_punches p
-            WHERE strftime('%Y-%m', p.punch_time) >= '{start_date}'
-            AND strftime('%Y-%m', p.punch_time) <= '{end_date}'
+            WHERE date(p.punch_time) >= '{start_date}'
+            AND date(p.punch_time) <= '{end_date}'
         ),
 
         ranked_punches AS (
@@ -75,11 +128,11 @@ async def generate_attendance_report(
 
         final AS (
             SELECT
-                e.emp_pin AS employee_id,
-                e.emp_firstname || ' ' || COALESCE(e.emp_lastname, '') AS full_name,
+                aed.emp_pin AS employee_id,
+                aed.emp_firstname || ' ' || COALESCE(aed.emp_lastname, '') AS full_name,
                 d.dept_name AS department,
-                r.punch_date AS Date,
-                CASE strftime('%w', r.punch_date)
+                aed.punch_date AS Date,
+                CASE strftime('%w', aed.punch_date)
                     WHEN '0' THEN 'Sun.'
                     WHEN '1' THEN 'Mon.'
                     WHEN '2' THEN 'Tues.'
@@ -95,12 +148,12 @@ async def generate_attendance_report(
                 MAX(CASE WHEN r.rn = 2 THEN r.punch_time END) AS `Clock-Out`,
                 MAX(CASE WHEN r.rn = 3 THEN r.punch_time END) AS `In`,
                 MAX(CASE WHEN r.rn = 4 THEN r.punch_time END) AS `Out`
-            FROM ranked_punches r
-            JOIN hr_employee e ON e.id = r.employee_id
-            LEFT JOIN hr_department d ON e.department_id = d.id
-            LEFT JOIN att_day_details ad ON ad.employee_id = r.employee_id AND date(ad.att_date) = r.punch_date
+            FROM all_employee_dates aed
+            LEFT JOIN ranked_punches r ON r.employee_id = aed.employee_id AND r.punch_date = aed.punch_date
+            LEFT JOIN hr_department d ON aed.department_id = d.id
+            LEFT JOIN att_day_details ad ON ad.employee_id = aed.employee_id AND date(ad.att_date) = aed.punch_date
             LEFT JOIN att_timetable tt ON ad.timetable_id = tt.id
-            GROUP BY e.emp_pin, e.emp_firstname, e.emp_lastname, d.dept_name, r.punch_date, tt.timetable_name, tt.timetable_start, tt.timetable_end
+            GROUP BY aed.emp_pin, aed.emp_firstname, aed.emp_lastname, d.dept_name, aed.punch_date, tt.timetable_name, tt.timetable_start, tt.timetable_end
         ),
 
         with_flags AS (
@@ -280,9 +333,15 @@ async def generate_attendance_report(
         # Generate Excel file using the same logic as saya.py
         output_file = generate_excel_report(df, company_name, start_date, end_date)
         
+        # Generate filename based on final date range
+        if start_date == end_date:
+            report_filename = f"attendance_report_{start_date}.xlsx"
+        else:
+            report_filename = f"attendance_report_{start_date}_to_{end_date}.xlsx"
+        
         return FileResponse(
             path=output_file,
-            filename=f"attendance_report_{start_date}_to_{end_date}.xlsx",
+            filename=report_filename,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
@@ -298,8 +357,449 @@ async def generate_attendance_report(
 def generate_excel_report(df, company_name, start_date, end_date):
     """Generate Excel report using the same formatting logic as saya.py"""
     
+    # Apply column swapping for NIGHT and AFTERNOON timetable rows
+    # Make a copy to ensure we can modify it
+    df = df.copy()
+    
+    # Initialize OT-F columns for all rows with default values
+    df['OT1-F'] = '0.0'
+    df['OT2-F'] = '0.0'
+    df['OT3-F'] = '0.0'
+    
+    # Debug: print unique timetable values to see what we're working with
+    print("DEBUG: Unique Timetable values:", df['Timetable'].unique())
+    
+    # ===== NIGHT SHIFT COLUMN SWAPPING =====
+    # Check for NIGHT timetables (partial match to catch variations)
+    night_mask_partial = df['Timetable'].str.contains('NIGHT', na=False)
+    print(f"DEBUG: Found {night_mask_partial.sum()} rows containing 'NIGHT'")
+    
+    if night_mask_partial.any():
+        print(f"DEBUG: Moving 'In' data to 'Clock-In' for {night_mask_partial.sum()} night shift rows")
+        
+        print("DEBUG: NIGHT - Before swap - sample row values:")
+        sample_idx = df[night_mask_partial].index[0]
+        print(f"  Clock-In: {df.loc[sample_idx, 'Clock-In']}")
+        print(f"  In: {df.loc[sample_idx, 'In']}")
+        
+        # Simple swap: Move 'In' data to 'Clock-In' for night shifts only
+        df.loc[night_mask_partial, 'Clock-In'] = df.loc[night_mask_partial, 'In']
+        df.loc[night_mask_partial, 'In'] = None  # Clear the 'In' column for night shifts
+        
+        print("DEBUG: NIGHT - After swap - sample row values:")
+        print(f"  Clock-In: {df.loc[sample_idx, 'Clock-In']}")
+        print(f"  In: {df.loc[sample_idx, 'In']}")
+        
+        print("DEBUG: NIGHT column swapping completed successfully")
+    else:
+        print("DEBUG: No NIGHT timetables found")
+    
+    # ===== AFTERNOON SHIFT COLUMN SWAPPING =====
+    # Check for AFTERNOON (12:00 - 00:00) timetable
+    afternoon_mask = df['Timetable'] == 'AFTERNOON (12:00 - 00:00)'
+    print(f"DEBUG: Found {afternoon_mask.sum()} rows with exact 'AFTERNOON (12:00 - 00:00)' match")
+    
+    # Also check for partial match in case of slight differences
+    afternoon_mask_partial = df['Timetable'].str.contains('AFTERNOON', na=False)
+    print(f"DEBUG: Found {afternoon_mask_partial.sum()} rows containing 'AFTERNOON'")
+    
+    # Use the exact match, but if none found, try partial
+    if afternoon_mask.any():
+        use_afternoon_mask = afternoon_mask
+        print("DEBUG: Using exact match for AFTERNOON")
+    elif afternoon_mask_partial.any():
+        use_afternoon_mask = afternoon_mask_partial
+        print("DEBUG: Using partial match for AFTERNOON timetables")
+    else:
+        use_afternoon_mask = None
+        print("DEBUG: No AFTERNOON timetables found")
+    
+    if use_afternoon_mask is not None and use_afternoon_mask.any():
+        print(f"DEBUG: Swapping columns for {use_afternoon_mask.sum()} afternoon shift rows")
+        
+        # Store original values for the swap
+        temp_clock_out = df.loc[use_afternoon_mask, 'Clock-Out'].copy()
+        temp_clock_in = df.loc[use_afternoon_mask, 'Clock-In'].copy()
+        temp_in = df.loc[use_afternoon_mask, 'In'].copy()
+        temp_out = df.loc[use_afternoon_mask, 'Out'].copy()
+        
+        print("DEBUG: AFTERNOON - Before swap - sample row values:")
+        if use_afternoon_mask.any():
+            sample_idx = df[use_afternoon_mask].index[0]
+            print(f"  Clock-In: {df.loc[sample_idx, 'Clock-In']}")
+            print(f"  Clock-Out: {df.loc[sample_idx, 'Clock-Out']}")
+            print(f"  In: {df.loc[sample_idx, 'In']}")
+            print(f"  Out: {df.loc[sample_idx, 'Out']}")
+        
+        # Perform the afternoon swap pattern:
+        # Clock-Out → Clock-In
+        # Clock-In → Out  
+        # In → Clock-Out
+        # Out → In
+        df.loc[use_afternoon_mask, 'Clock-In'] = temp_clock_out    # Clock-Out → Clock-In
+        df.loc[use_afternoon_mask, 'Out'] = temp_clock_in          # Clock-In → Out
+        df.loc[use_afternoon_mask, 'Clock-Out'] = temp_in          # In → Clock-Out
+        df.loc[use_afternoon_mask, 'In'] = temp_out                # Out → In
+        
+        print("DEBUG: AFTERNOON - After swap - sample row values:")
+        if use_afternoon_mask.any():
+            print(f"  Clock-In: {df.loc[sample_idx, 'Clock-In']}")
+            print(f"  Clock-Out: {df.loc[sample_idx, 'Clock-Out']}")
+            print(f"  In: {df.loc[sample_idx, 'In']}")
+            print(f"  Out: {df.loc[sample_idx, 'Out']}")
+        
+        print("DEBUG: AFTERNOON column swapping completed successfully")
+        
+        # Recalculate derived columns for NIGHT shifts after swapping
+        print("DEBUG: Recalculating derived columns for NIGHT shifts...")
+        
+        def time_to_seconds(time_str):
+            """Convert HH:MM or HH:MM:SS to seconds"""
+            if not time_str or pd.isna(time_str) or time_str == '':
+                return None
+            try:
+                parts = str(time_str).split(':')
+                hours = int(parts[0])
+                minutes = int(parts[1])
+                return hours * 3600 + minutes * 60
+            except:
+                return None
+        
+        def seconds_to_time_format(seconds):
+            """Convert seconds to HH:MM format"""
+            if seconds is None or seconds < 0:
+                return '00:00'
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            return f"{hours:02d}:{minutes:02d}"
+        
+        for idx in df[night_mask_partial].index:
+            clock_in = df.loc[idx, 'Clock-In']
+            clock_out = df.loc[idx, 'Clock-Out']
+            in_time = df.loc[idx, 'In']
+            out_time = df.loc[idx, 'Out']
+            start_work_time = df.loc[idx, 'StartWorkTime']
+            end_work_time = df.loc[idx, 'EndWorkTime']
+            
+            # Convert times to seconds for calculation
+            clock_in_sec = time_to_seconds(clock_in)
+            clock_out_sec = time_to_seconds(clock_out)
+            in_sec = time_to_seconds(in_time)
+            out_sec = time_to_seconds(out_time)
+            start_sec = time_to_seconds(start_work_time)
+            end_sec = time_to_seconds(end_work_time)
+            
+            # Recalculate Break (time between Clock-Out and In)
+            if clock_out_sec is not None and in_sec is not None:
+                if in_sec >= clock_out_sec:
+                    break_seconds = in_sec - clock_out_sec
+                else:
+                    # Handle overnight case
+                    break_seconds = in_sec - clock_out_sec + 86400
+                df.loc[idx, 'Break'] = seconds_to_time_format(break_seconds)
+            else:
+                df.loc[idx, 'Break'] = '00:00'
+            
+            # Recalculate Late Clock In
+            if clock_in_sec is not None and start_sec is not None:
+                if clock_in_sec > start_sec:
+                    late_seconds = clock_in_sec - start_sec
+                    df.loc[idx, 'Late Clock In'] = seconds_to_time_format(late_seconds)
+                else:
+                    df.loc[idx, 'Late Clock In'] = '00:00'
+            else:
+                df.loc[idx, 'Late Clock In'] = '00:00'
+            
+            # Recalculate Early Clock In
+            if clock_in_sec is not None and start_sec is not None:
+                if clock_in_sec < start_sec:
+                    early_seconds = start_sec - clock_in_sec
+                    df.loc[idx, 'Early Clock In'] = seconds_to_time_format(early_seconds)
+                else:
+                    df.loc[idx, 'Early Clock In'] = '00:00'
+            else:
+                df.loc[idx, 'Early Clock In'] = '00:00'
+            
+            # Recalculate Early Clock Out (use Out first, fallback to Clock-Out)
+            final_out_sec = out_sec if out_sec is not None else clock_out_sec
+            if final_out_sec is not None and end_sec is not None:
+                if final_out_sec < end_sec:
+                    early_out_seconds = end_sec - final_out_sec
+                    df.loc[idx, 'Early Clock Out'] = seconds_to_time_format(early_out_seconds)
+                else:
+                    df.loc[idx, 'Early Clock Out'] = '00:00'
+            else:
+                df.loc[idx, 'Early Clock Out'] = '00:00'
+            
+            # Recalculate Work Time (Clock-In to final out time minus 1 hour break)
+            if clock_in_sec is not None and final_out_sec is not None:
+                if final_out_sec >= clock_in_sec:
+                    work_seconds = final_out_sec - clock_in_sec - 3600  # Subtract 1 hour break
+                else:
+                    # Handle overnight case
+                    work_seconds = final_out_sec - clock_in_sec + 86400 - 3600
+                
+                if work_seconds < 0:
+                    work_seconds = 0
+                df.loc[idx, 'Work Time'] = seconds_to_time_format(work_seconds)
+            else:
+                df.loc[idx, 'Work Time'] = '00:00'
+            
+            # Recalculate Absent (if no clock-in or clock-out, use Required Work Time, else '00:00')
+            if clock_in or clock_out:
+                df.loc[idx, 'Absent'] = '00:00'
+            else:
+                df.loc[idx, 'Absent'] = df.loc[idx, 'Required Work Time']
+            
+            # Recalculate OT1, OT2, OT3 based on new Work Time
+            work_time_str = df.loc[idx, 'Work Time']
+            required_work_time_str = df.loc[idx, 'Required Work Time']
+            workday = df.loc[idx, 'Workday']
+            
+            # Convert work times to seconds for comparison
+            work_time_seconds = time_to_seconds(work_time_str)
+            required_work_seconds = time_to_seconds(required_work_time_str)
+            
+            if work_time_seconds is not None and required_work_seconds is not None:
+                overtime_seconds = work_time_seconds - required_work_seconds
+                
+                if overtime_seconds > 0:
+                    overtime_str = seconds_to_time_format(overtime_seconds)
+                    
+                    # OT1: Overtime for weekdays (Mon-Fri)
+                    if workday in ['Mon.', 'Tues.', 'Wed.', 'Thur.', 'Fri.']:
+                        df.loc[idx, 'OT1'] = overtime_str
+                        df.loc[idx, 'OT2'] = '00:00'
+                    # OT2: Overtime for weekends (Sat-Sun)
+                    elif workday in ['Sat.', 'Sun.']:
+                        df.loc[idx, 'OT1'] = '00:00'
+                        df.loc[idx, 'OT2'] = overtime_str
+                    else:
+                        df.loc[idx, 'OT1'] = '00:00'
+                        df.loc[idx, 'OT2'] = '00:00'
+                else:
+                    # No overtime
+                    df.loc[idx, 'OT1'] = '00:00'
+                    df.loc[idx, 'OT2'] = '00:00'
+            else:
+                # Cannot calculate overtime
+                df.loc[idx, 'OT1'] = '00:00'
+                df.loc[idx, 'OT2'] = '00:00'
+            
+            # OT3 is always '00:00' according to the original logic
+            df.loc[idx, 'OT3'] = '00:00'
+        
+        print("DEBUG: Derived columns (including OT1, OT2, OT3) recalculated successfully for NIGHT shifts")
+    
+    # Recalculate derived columns for AFTERNOON shifts after swapping
+    if use_afternoon_mask is not None and use_afternoon_mask.any():
+        print("DEBUG: Recalculating derived columns for AFTERNOON shifts...")
+        
+        for idx in df[use_afternoon_mask].index:
+            clock_in = df.loc[idx, 'Clock-In']
+            clock_out = df.loc[idx, 'Clock-Out']
+            in_time = df.loc[idx, 'In']
+            out_time = df.loc[idx, 'Out']
+            start_work_time = df.loc[idx, 'StartWorkTime']
+            end_work_time = df.loc[idx, 'EndWorkTime']
+            
+            # Convert times to seconds for calculation
+            clock_in_sec = time_to_seconds(clock_in)
+            clock_out_sec = time_to_seconds(clock_out)
+            in_sec = time_to_seconds(in_time)
+            out_sec = time_to_seconds(out_time)
+            start_sec = time_to_seconds(start_work_time)
+            end_sec = time_to_seconds(end_work_time)
+            
+            # Recalculate Break (time between Clock-Out and In)
+            if clock_out_sec is not None and in_sec is not None:
+                if in_sec >= clock_out_sec:
+                    break_seconds = in_sec - clock_out_sec
+                else:
+                    # Handle overnight case
+                    break_seconds = in_sec - clock_out_sec + 86400
+                df.loc[idx, 'Break'] = seconds_to_time_format(break_seconds)
+            else:
+                df.loc[idx, 'Break'] = '00:00'
+            
+            # Recalculate Late Clock In
+            if clock_in_sec is not None and start_sec is not None:
+                if clock_in_sec > start_sec:
+                    late_seconds = clock_in_sec - start_sec
+                    df.loc[idx, 'Late Clock In'] = seconds_to_time_format(late_seconds)
+                else:
+                    df.loc[idx, 'Late Clock In'] = '00:00'
+            else:
+                df.loc[idx, 'Late Clock In'] = '00:00'
+            
+            # Recalculate Early Clock In
+            if clock_in_sec is not None and start_sec is not None:
+                if clock_in_sec < start_sec:
+                    early_seconds = start_sec - clock_in_sec
+                    df.loc[idx, 'Early Clock In'] = seconds_to_time_format(early_seconds)
+                else:
+                    df.loc[idx, 'Early Clock In'] = '00:00'
+            else:
+                df.loc[idx, 'Early Clock In'] = '00:00'
+            
+            # Recalculate Early Clock Out (use Out first, fallback to Clock-Out)
+            final_out_sec = out_sec if out_sec is not None else clock_out_sec
+            if final_out_sec is not None and end_sec is not None:
+                if final_out_sec < end_sec:
+                    early_out_seconds = end_sec - final_out_sec
+                    df.loc[idx, 'Early Clock Out'] = seconds_to_time_format(early_out_seconds)
+                else:
+                    df.loc[idx, 'Early Clock Out'] = '00:00'
+            else:
+                df.loc[idx, 'Early Clock Out'] = '00:00'
+            
+            # Recalculate Work Time (Clock-In to final out time minus 1 hour break)
+            if clock_in_sec is not None and final_out_sec is not None:
+                if final_out_sec >= clock_in_sec:
+                    work_seconds = final_out_sec - clock_in_sec - 3600  # Subtract 1 hour break
+                else:
+                    # Handle overnight case
+                    work_seconds = final_out_sec - clock_in_sec + 86400 - 3600
+                
+                if work_seconds < 0:
+                    work_seconds = 0
+                df.loc[idx, 'Work Time'] = seconds_to_time_format(work_seconds)
+            else:
+                df.loc[idx, 'Work Time'] = '00:00'
+            
+            # Recalculate Absent (if no clock-in or clock-out, use Required Work Time, else '00:00')
+            if clock_in or clock_out:
+                df.loc[idx, 'Absent'] = '00:00'
+            else:
+                df.loc[idx, 'Absent'] = df.loc[idx, 'Required Work Time']
+            
+            # Recalculate OT1, OT2, OT3 based on new Work Time
+            work_time_str = df.loc[idx, 'Work Time']
+            required_work_time_str = df.loc[idx, 'Required Work Time']
+            workday = df.loc[idx, 'Workday']
+            
+            # Convert work times to seconds for comparison
+            work_time_seconds = time_to_seconds(work_time_str)
+            required_work_seconds = time_to_seconds(required_work_time_str)
+            
+            if work_time_seconds is not None and required_work_seconds is not None:
+                overtime_seconds = work_time_seconds - required_work_seconds
+                
+                if overtime_seconds > 0:
+                    overtime_str = seconds_to_time_format(overtime_seconds)
+                    
+                    # OT1: Overtime for weekdays (Mon-Fri)
+                    if workday in ['Mon.', 'Tues.', 'Wed.', 'Thur.', 'Fri.']:
+                        df.loc[idx, 'OT1'] = overtime_str
+                        df.loc[idx, 'OT2'] = '00:00'
+                    # OT2: Overtime for weekends (Sat-Sun)
+                    elif workday in ['Sat.', 'Sun.']:
+                        df.loc[idx, 'OT1'] = '00:00'
+                        df.loc[idx, 'OT2'] = overtime_str
+                    else:
+                        df.loc[idx, 'OT1'] = '00:00'
+                        df.loc[idx, 'OT2'] = '00:00'
+                else:
+                    # No overtime
+                    df.loc[idx, 'OT1'] = '00:00'
+                    df.loc[idx, 'OT2'] = '00:00'
+            else:
+                # Cannot calculate overtime
+                df.loc[idx, 'OT1'] = '00:00'
+                df.loc[idx, 'OT2'] = '00:00'
+            
+            # OT3 is always '00:00' according to the original logic
+            df.loc[idx, 'OT3'] = '00:00'
+        
+        print("DEBUG: Derived columns (including OT1, OT2, OT3) recalculated successfully for AFTERNOON shifts")
+    
+    # Calculate OT-F values for ALL rows (not just NIGHT shifts)
+    print("DEBUG: Calculating OT-F values for all rows...")
+    
+    def time_to_decimal_hours_global(time_str):
+        """Convert HH:MM time to decimal hours"""
+        if not time_str or time_str == '00:00' or pd.isna(time_str):
+            return 0.0
+        try:
+            parts = str(time_str).split(':')
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            return hours + (minutes / 60.0)
+        except:
+            return 0.0
+    
+    def floor_to_half_hour_global(decimal_hours):
+        """Floor decimal hours to nearest 0.5 increment"""
+        if decimal_hours == 0.0:
+            return 0.0
+        # Floor to nearest 0.5: multiply by 2, floor, then divide by 2
+        return float(int(decimal_hours * 2)) / 2.0
+    
+    # Process all rows to calculate OT-F values
+    for idx in df.index:
+        # Get current OT values and convert to floored format
+        ot1_decimal = time_to_decimal_hours_global(df.loc[idx, 'OT1'])
+        ot2_decimal = time_to_decimal_hours_global(df.loc[idx, 'OT2'])
+        ot3_decimal = time_to_decimal_hours_global(df.loc[idx, 'OT3'])
+        
+        # Apply floor to 0.5 hour increment
+        ot1_floored = floor_to_half_hour_global(ot1_decimal)
+        ot2_floored = floor_to_half_hour_global(ot2_decimal)
+        ot3_floored = floor_to_half_hour_global(ot3_decimal)
+        
+        # Store in OT-F columns as decimal format
+        df.loc[idx, 'OT1-F'] = f"{ot1_floored:.1f}" if ot1_floored > 0 else "0.0"
+        df.loc[idx, 'OT2-F'] = f"{ot2_floored:.1f}" if ot2_floored > 0 else "0.0"
+        df.loc[idx, 'OT3-F'] = f"{ot3_floored:.1f}" if ot3_floored > 0 else "0.0"
+    
+    print("DEBUG: OT-F values calculated for all rows successfully")
+    
+    # Add missing columns to DataFrame for proper TOTAL calculation
+    print("DEBUG: Adding missing columns to DataFrame for TOTAL calculation...")
+    
+    for idx in df.index:
+        is_sunday = df.loc[idx, 'Workday'] == 'Sun.'
+        
+        # Total Base: 1.0 for non-Sunday, 0.0 for Sunday
+        if is_sunday:
+            df.loc[idx, 'Total Base'] = '0.0'
+        else:
+            df.loc[idx, 'Total Base'] = '1.0'
+        
+        # Day: Sunday is always empty, other days depend on clock-in/out presence
+        if is_sunday:
+            df.loc[idx, 'Day'] = ''
+        else:
+            # Check if worker was present (has clock-in OR clock-out)
+            clock_in = df.loc[idx, 'Clock-In']
+            clock_out = df.loc[idx, 'Clock-Out']
+            if clock_in or clock_out:  # If either clock-in or clock-out has value
+                df.loc[idx, 'Day'] = '1.0'
+            else:
+                df.loc[idx, 'Day'] = ''
+        
+        # Total Day: Fill every cell with 1.0
+        df.loc[idx, 'Total Day'] = '1.0'
+        
+        # Night Shift: 2.0 if NIGHT timetable, 0.0 otherwise
+        original_timetable = df.loc[idx, 'Timetable']
+        if 'NIGHT' in str(original_timetable).upper():
+            df.loc[idx, 'Night Shift'] = '2.0'
+        else:
+            df.loc[idx, 'Night Shift'] = '0.0'
+        
+        # Penalty and Allowence: default to 0.0
+        df.loc[idx, 'Penalty'] = '0.0'
+        df.loc[idx, 'Allowence'] = '0.0'
+        
+        # Leave columns: default to empty
+        for leave_col in ['H', 'MC', 'AL', 'UP', 'S']:
+            df.loc[idx, leave_col] = ''
+    
+    print("DEBUG: Missing columns added to DataFrame successfully")
+    
     # Columns to sum
-    sum_columns = ['Required Work Time', 'Work Time', 'Absent', 'Late Clock In', 'Early Clock In', 'Early Clock Out', 'Penalty', 'OT1', 'OT2', 'OT3', 'Night Shift', 'Allowence', 'Total Base', 'Day', 'H', 'MC', 'AL', 'UP', 'S', 'Total Day']
+    sum_columns = ['Required Work Time', 'Work Time', 'Absent', 'Late Clock In', 'Early Clock In', 'Early Clock Out', 'Penalty', 'OT1', 'OT2', 'OT3', 'OT1-F', 'OT2-F', 'OT3-F', 'Night Shift', 'Allowence', 'Total Base', 'Day', 'H', 'MC', 'AL', 'UP', 'S', 'Total Day']
 
     # Create workbook
     wb = Workbook()
@@ -368,10 +868,15 @@ def generate_excel_report(df, company_name, start_date, end_date):
 
     # Add subtitle with date range
     ws.cell(row=current_row, column=1, value=f"Monthly Statement Report ({start_date} to {end_date})").font = subtitle_font
-    current_row += 2  # Add 1 empty row of space after subtitle
+    current_row += 1
+    
+    # Add note about expandable columns
+    note_font = Font(name='Tahoma', size=9, italic=True)
+    ws.cell(row=current_row, column=1, value="📍 Note: OT columns (OT1,OT2,OT3) and Leave columns (H,MC,AL,UP,S) are grouped. Click [+] buttons to expand.").font = note_font
+    current_row += 2  # Add 1 empty row of space after note
 
     # Write column headers only once
-    cols_to_show = ['Date', 'Workday', 'Timetable', 'EYEE NAME', 'StartWorkTime', 'EndWorkTime', 'Clock-In', 'Clock-Out', 'In', 'Out', 'Required Work Time', 'Break', 'Late Clock In', 'Early Clock In', 'Early Clock Out', 'Work Time', 'Absent', 'Penalty', 'OT1', 'OT2', 'OT3', 'Night Shift', 'Allowence', 'Total Base', 'Day', 'H', 'MC', 'AL', 'UP', 'S', 'Total Day']
+    cols_to_show = ['Date', 'Workday', 'Timetable', 'EYEE NAME', 'StartWorkTime', 'EndWorkTime', 'Clock-In', 'Clock-Out', 'In', 'Out', 'Required Work Time', 'Break', 'Late Clock In', 'Early Clock In', 'Early Clock Out', 'Work Time', 'Absent', 'Penalty', 'OT1', 'OT2', 'OT3', 'OT1-F', 'OT2-F', 'OT3-F', 'Night Shift', 'Allowence', 'Total Base', 'Day', 'H', 'MC', 'AL', 'UP', 'S', 'Total Day']
     # Define columns that need the special header color
     colored_header_columns = ['Date', 'Workday', 'Timetable', 'EYEE NAME', 'StartWorkTime', 'EndWorkTime', 'Day', 'H', 'MC', 'AL', 'UP', 'S', 'Required Work Time', 'Break', 'Late Clock In', 'Early Clock In', 'Early Clock Out', 'Work Time', 'Absent']
     for col_idx, col_name in enumerate(cols_to_show, start=1):
@@ -387,7 +892,7 @@ def generate_excel_report(df, company_name, start_date, end_date):
             header_cell.fill = total_day_fill
         elif col_name in ['Clock-In', 'Clock-Out', 'In', 'Out']:
             header_cell.fill = clock_header_fill
-        elif col_name in ['OT1', 'OT2', 'OT3']:
+        elif col_name in ['OT1', 'OT2', 'OT3', 'OT1-F', 'OT2-F', 'OT3-F']:
             header_cell.fill = ot_header_fill
         elif col_name == 'Penalty':
             header_cell.fill = penalty_fill
@@ -535,6 +1040,15 @@ def generate_excel_report(df, company_name, start_date, end_date):
                     
                     cell_value = time_to_decimal(cell_value)
                 
+                # Handle OT-F columns (floored overtime values)
+                if col_name in ['OT1-F', 'OT2-F', 'OT3-F']:
+                    # For OT-F columns, get value from DataFrame, handle NaN and None cases
+                    val = row.get(col_name, '0.0')
+                    if pd.isna(val) or val is None or val == '' or str(val).lower() == 'nan':
+                        cell_value = '0.0'
+                    else:
+                        cell_value = str(val)
+                
                 cell = ws.cell(row=current_row, column=col_idx, value=cell_value)
                 
                 # Apply font styling based on suspicious row detection
@@ -600,8 +1114,145 @@ def generate_excel_report(df, company_name, start_date, end_date):
             ws.row_dimensions[current_row].outline_level = 1
             current_row += 1
 
+        # Add TOTAL row for each employee
+        def time_to_minutes_for_sum(time_str):
+            """Convert HH:MM time string to minutes for summing"""
+            if not time_str or time_str in ['', '0:00', '00:00']:
+                return 0
+            try:
+                parts = str(time_str).split(':')
+                hours = int(parts[0])
+                minutes = int(parts[1])
+                return hours * 60 + minutes
+            except:
+                return 0
+        
+        def minutes_to_time_str(total_minutes):
+            """Convert total minutes back to HH:MM format"""
+            if total_minutes == 0:
+                return '00:00'
+            hours = total_minutes // 60
+            minutes = total_minutes % 60
+            return f"{hours:02d}:{minutes:02d}"
+        
+        def sum_decimal_values(group, col_name):
+            """Sum decimal values from a column"""
+            total = 0.0
+            has_values = False
+            
+            for _, row in group.iterrows():
+                val = row.get(col_name, '')
+                
+                if val and str(val).strip() not in ['', '0.0', 'nan', 'None', 'NaN']:
+                    try:
+                        # Handle different data formats
+                        val_str = str(val).strip()
+                        
+                        # Special handling for certain column types
+                        if col_name in ['OT1', 'OT2', 'OT3']:
+                            # These might be in decimal format already (e.g., "2.5") or time format (e.g., "02:30")
+                            if ':' in val_str:
+                                # Convert time format to decimal hours
+                                parts = val_str.split(':')
+                                hours = int(parts[0])
+                                minutes = int(parts[1])
+                                numeric_val = hours + (minutes / 60.0)
+                            else:
+                                numeric_val = float(val_str)
+                        else:
+                            # Standard decimal conversion
+                            numeric_val = float(val_str)
+                        
+                        total += numeric_val
+                        if numeric_val != 0.0:
+                            has_values = True
+                            
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Return the total if there are any values, otherwise return "0.0" for columns that should show totals
+            if has_values or total > 0:
+                return f"{total:.1f}"
+            else:
+                # For certain columns, always show 0.0 even if no values
+                always_show_zero = ['Penalty', 'OT1', 'OT2', 'OT3', 'OT1-F', 'OT2-F', 'OT3-F', 'Night Shift', 'Allowence', 'Total Base', 'Day', 'Total Day']
+                return "0.0" if col_name in always_show_zero else ""
+        
+        # Calculate totals for time-based columns
+        time_columns = ['Required Work Time', 'Work Time', 'Absent', 'Late Clock In', 'Early Clock In', 'Early Clock Out', 'Break']
+        decimal_columns = ['Penalty', 'OT1', 'OT2', 'OT3', 'OT1-F', 'OT2-F', 'OT3-F', 'Night Shift', 'Allowence', 'Total Base', 'Day', 'H', 'MC', 'AL', 'UP', 'S', 'Total Day']
+        
+        # Columns that should show count of non-empty records
+        count_columns = ['Workday', 'Timetable']
+        
+        # Columns that should remain empty in totals
+        empty_columns = ['EYEE NAME', 'StartWorkTime', 'EndWorkTime', 'Clock-In', 'Clock-Out', 'In', 'Out']
+        
+        # Write TOTAL row
+        for col_idx, col_name in enumerate(cols_to_show, start=1):
+            if col_name == 'Date':
+                cell_value = 'TOTAL'
+            elif col_name in time_columns:
+                # Sum time values
+                total_minutes = 0
+                for _, row in group.iterrows():
+                    total_minutes += time_to_minutes_for_sum(row.get(col_name, ''))
+                cell_value = minutes_to_time_str(total_minutes)
+            elif col_name in decimal_columns:
+                # Sum decimal values
+                cell_value = sum_decimal_values(group, col_name)
+            elif col_name in count_columns:
+                # Count non-empty values
+                count = 0
+                for _, row in group.iterrows():
+                    val = row.get(col_name, '')
+                    if val and str(val).strip() != '':
+                        count += 1
+                cell_value = str(count) if count > 0 else ''
+            elif col_name in empty_columns:
+                # Leave these columns empty in total row
+                cell_value = ''
+            else:
+                # For any remaining columns, try to sum if they contain numeric/time data
+                # First try as decimal
+                try:
+                    total_decimal = 0.0
+                    has_values = False
+                    for _, row in group.iterrows():
+                        val = row.get(col_name, '')
+                        if val and str(val).strip() not in ['', '0.0', 'nan']:
+                            try:
+                                total_decimal += float(val)
+                                has_values = True
+                            except:
+                                pass
+                    if has_values:
+                        cell_value = f"{total_decimal:.1f}" if total_decimal > 0 else "0.0"
+                    else:
+                        # Try as time format
+                        total_minutes = 0
+                        has_time_values = False
+                        for _, row in group.iterrows():
+                            val = row.get(col_name, '')
+                            if val and str(val).strip() not in ['', '00:00', '0:00']:
+                                minutes = time_to_minutes_for_sum(val)
+                                if minutes > 0:
+                                    total_minutes += minutes
+                                    has_time_values = True
+                        cell_value = minutes_to_time_str(total_minutes) if has_time_values else ''
+                except:
+                    cell_value = ''
+            
+            cell = ws.cell(row=current_row, column=col_idx, value=cell_value)
+            cell.font = tahoma_bold_font
+            cell.fill = green_fill  # Green background for total rows
+            cell.border = thin_border
+        
+        ws.row_dimensions[current_row].height = 18
+        current_row += 1
+
         # Add one empty row after each employee
-        current_row += 2
+        current_row += 1
 
     # Apply border to all cells with data (excluding title rows)
     for row in ws.iter_rows(min_row=5, max_row=ws.max_row, min_col=1, max_col=len(cols_to_show)):
@@ -611,6 +1262,66 @@ def generate_excel_report(df, company_name, start_date, end_date):
     # Freeze panes to keep header rows visible when scrolling
     # Freeze at the row right after the column headers (row 6)
     ws.freeze_panes = 'A6'
+
+    # Add column grouping for expandable columns
+    # Find the column indices for OT1, OT2, OT3
+    ot1_col_idx = None
+    ot2_col_idx = None
+    ot3_col_idx = None
+    
+    # Find the column indices for H, MC, AL, UP, S
+    h_col_idx = None
+    mc_col_idx = None
+    al_col_idx = None
+    up_col_idx = None
+    s_col_idx = None
+    
+    for col_idx, col_name in enumerate(cols_to_show, start=1):
+        if col_name == 'OT1':
+            ot1_col_idx = col_idx
+        elif col_name == 'OT2':
+            ot2_col_idx = col_idx
+        elif col_name == 'OT3':
+            ot3_col_idx = col_idx
+        elif col_name == 'H':
+            h_col_idx = col_idx
+        elif col_name == 'MC':
+            mc_col_idx = col_idx
+        elif col_name == 'AL':
+            al_col_idx = col_idx
+        elif col_name == 'UP':
+            up_col_idx = col_idx
+        elif col_name == 'S':
+            s_col_idx = col_idx
+    
+    # Group OT1, OT2, OT3 columns together if all found
+    if ot1_col_idx and ot2_col_idx and ot3_col_idx:
+        start_col = min(ot1_col_idx, ot2_col_idx, ot3_col_idx)
+        end_col = max(ot1_col_idx, ot2_col_idx, ot3_col_idx)
+        
+        # Set outline level for the OT columns (level 1 for grouping)
+        for col_num in range(start_col, end_col + 1):
+            col_letter = ws.cell(row=1, column=col_num).column_letter
+            ws.column_dimensions[col_letter].outline_level = 1
+            # Set columns to be hidden by default (collapsed state)
+            ws.column_dimensions[col_letter].hidden = True
+        
+        print(f"DEBUG: Grouped OT columns {start_col} to {end_col} for expand/collapse functionality")
+    
+    # Group H, MC, AL, UP, S columns together if all found
+    leave_columns = [h_col_idx, mc_col_idx, al_col_idx, up_col_idx, s_col_idx]
+    if all(col is not None for col in leave_columns):
+        start_col = min(leave_columns)
+        end_col = max(leave_columns)
+        
+        # Set outline level for the leave columns (level 1 for grouping)
+        for col_num in range(start_col, end_col + 1):
+            col_letter = ws.cell(row=1, column=col_num).column_letter
+            ws.column_dimensions[col_letter].outline_level = 1
+            # Set columns to be hidden by default (collapsed state)
+            ws.column_dimensions[col_letter].hidden = True
+        
+        print(f"DEBUG: Grouped Leave columns (H,MC,AL,UP,S) {start_col} to {end_col} for expand/collapse functionality")
 
     # Set outline groups to be collapsed by default
     # Hide all data rows (outline level 1) by default to show collapsed view

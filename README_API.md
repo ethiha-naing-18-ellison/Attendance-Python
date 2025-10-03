@@ -37,7 +37,7 @@ pip install -r requirements.txt
 2. **Run the API server:**
 
 ```bash
-python run_api.py
+python main.py
 ```
 
 Or directly with uvicorn:
@@ -53,7 +53,7 @@ uvicorn attendance_api:app --host 0.0.0.0 --port 8000 --reload
 Run the server using:
 
 ```bash
-python run_api.py
+python main.py
 ```
 
 The API will be available at:
@@ -109,7 +109,64 @@ else:
     print(f"Error: {response.json()}")
 ```
 
-### Using the Interactive Documentation
+### Punch Time Smart Adjustment (1-Hour Gap Rule)
+
+The system now includes intelligent punch time adjustment to handle accidental quick double-punches for BOTH Clock-In/Clock-Out AND In/Out pairs:
+
+**How it works:**
+
+- **Clock-In** is always the first punch of the day
+- **Clock-Out** must be at least 1 hour after Clock-In, otherwise skip to next punch
+- **In** and **Out** must be at least 1 hour apart, otherwise skip the Out to next punch
+- All adjustments cascade to maintain logical sequence
+
+**Example scenarios:**
+
+**Scenario 1 - Normal Case (no adjustment needed):**
+
+```
+Raw punches: 8:00 AM, 12:00 PM, 1:00 PM, 5:00 PM
+Result: Clock-In: 8:00 AM, Clock-Out: 12:00 PM, In: 1:00 PM, Out: 5:00 PM
+(4-hour gap between Clock-In and Clock-Out ✅)
+```
+
+**Scenario 2 - Clock-Out too close (adjustment applied):**
+
+```
+Raw punches: 8:00 AM, 8:03 AM, 12:00 PM, 1:00 PM, 5:00 PM
+Before: Clock-In: 8:00 AM, Clock-Out: 8:03 AM (❌ only 3 minutes!)
+After:  Clock-In: 8:00 AM, Clock-Out: 12:00 PM, In: 1:00 PM, Out: 5:00 PM
+```
+
+**Scenario 3 - In/Out too close (adjustment applied):**
+
+```
+Raw punches: 8:00 AM, 12:00 PM, 2:00 PM, 2:02 PM, 6:00 PM
+Before: In: 2:00 PM, Out: 2:02 PM (❌ only 2 minutes!)
+After:  Clock-In: 8:00 AM, Clock-Out: 12:00 PM, In: 2:00 PM, Out: 6:00 PM
+```
+
+**Scenario 4 - Multiple adjustments:**
+
+```
+Raw punches: 8:00 AM, 8:03 AM, 12:00 PM, 2:00 PM, 2:02 PM, 6:00 PM
+Result: Clock-In: 8:00 AM, Clock-Out: 12:00 PM, In: 2:00 PM, Out: 6:00 PM
+(Both Clock-Out and Out were adjusted)
+```
+
+This ensures realistic work patterns for all punch types while preserving all punch data.
+
+### Using the Web Interface
+
+1. Open http://localhost:8000 in your browser for the user-friendly web interface
+2. Upload your ZK.db file using the file selector
+3. Enter the start date (and optionally end date) using the date pickers
+4. Optionally enter public holiday dates (comma-separated format, e.g., "2025-06-05,2025-06-15")
+5. Click the **"Generate Report"** button
+6. Wait for processing to complete (progress bar will show status)
+7. Click the **"Download Report"** button when it appears
+
+### Using the Interactive API Documentation
 
 1. Open http://localhost:8000/docs in your browser
 2. Click on the **POST /generate-attendance-report** endpoint
@@ -181,8 +238,9 @@ This API is designed for internal use. In production environments, consider addi
 
 ```
 ├── attendance_api.py    # Main FastAPI application
-├── run_api.py          # Simple script to run the API
+├── main.py          # Simple script to run the API
 ├── requirements.txt    # Python dependencies
 ├── README_API.md      # This documentation
 └── saya.py            # Original script (for reference)
+multi_employee_attendance_converter.py         # Convery Exel to Json File (For Reference)
 ```

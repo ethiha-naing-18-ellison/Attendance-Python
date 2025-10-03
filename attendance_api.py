@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 import sqlite3
 import pandas as pd
 import random
@@ -74,17 +75,151 @@ async def generate_attendance_report(
                 p.employee_id,
                 p.punch_date,
                 p.punch_time,
+                p.full_punch_time,
                 ROW_NUMBER() OVER (PARTITION BY p.employee_id, p.punch_date ORDER BY p.full_punch_time ASC) AS rn
             FROM punches_per_day p
         ),
 
+        punch_analysis AS (
+            SELECT 
+                employee_id,
+                punch_date,
+                MAX(CASE WHEN rn = 1 THEN punch_time END) AS punch_1,
+                MAX(CASE WHEN rn = 2 THEN punch_time END) AS punch_2,
+                MAX(CASE WHEN rn = 3 THEN punch_time END) AS punch_3,
+                MAX(CASE WHEN rn = 4 THEN punch_time END) AS punch_4,
+                MAX(CASE WHEN rn = 5 THEN punch_time END) AS punch_5,
+                MAX(CASE WHEN rn = 6 THEN punch_time END) AS punch_6,
+                MAX(CASE WHEN rn = 7 THEN punch_time END) AS punch_7,
+                MAX(CASE WHEN rn = 1 THEN full_punch_time END) AS full_punch_1,
+                MAX(CASE WHEN rn = 2 THEN full_punch_time END) AS full_punch_2,
+                MAX(CASE WHEN rn = 3 THEN full_punch_time END) AS full_punch_3,
+                MAX(CASE WHEN rn = 4 THEN full_punch_time END) AS full_punch_4,
+                MAX(CASE WHEN rn = 5 THEN full_punch_time END) AS full_punch_5,
+                MAX(CASE WHEN rn = 6 THEN full_punch_time END) AS full_punch_6,
+                MAX(CASE WHEN rn = 7 THEN full_punch_time END) AS full_punch_7
+            FROM ranked_punches
+            GROUP BY employee_id, punch_date
+        ),
+
+        adjusted_punches AS (
+            SELECT 
+                employee_id,
+                punch_date,
+                punch_1,
+                punch_2,
+                punch_3,
+                punch_4,
+                punch_5,
+                punch_6,
+                punch_7,
+                full_punch_1,
+                full_punch_2,
+                full_punch_3,
+                full_punch_4,
+                full_punch_5,
+                full_punch_6,
+                full_punch_7,
+                -- Calculate the time difference in seconds between punch_1 and punch_2 (Clock-In/Clock-Out)
+                CASE 
+                    WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
+                    THEN (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) 
+                    ELSE 0 
+                END AS clock_gap,
+                -- Determine if we need to skip punch_2 for Clock-Out (if gap < 1 hour = 3600 seconds)
+                CASE 
+                    WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 3600 
+                    THEN 1  -- Skip punch_2 
+                    ELSE 0  -- Use punch_2 normally
+                END AS skip_punch_2
+            FROM punch_analysis
+        ),
+
+        in_out_analysis AS (
+            SELECT 
+                *,
+                -- Determine which punches will be used for In and Out after Clock adjustments
+                CASE 
+                    WHEN skip_punch_2 = 1 THEN punch_4  -- Skip punch_2, so In = punch_4
+                    ELSE punch_3                        -- Normal case, In = punch_3
+                END AS tentative_in,
+                CASE 
+                    WHEN skip_punch_2 = 1 THEN punch_5  -- Skip punch_2, so Out = punch_5
+                    ELSE punch_4                        -- Normal case, Out = punch_4
+                END AS tentative_out,
+                CASE 
+                    WHEN skip_punch_2 = 1 THEN full_punch_4  -- Skip punch_2, so In = full_punch_4
+                    ELSE full_punch_3                        -- Normal case, In = full_punch_3
+                END AS tentative_in_full,
+                CASE 
+                    WHEN skip_punch_2 = 1 THEN full_punch_5  -- Skip punch_2, so Out = full_punch_5
+                    ELSE full_punch_4                        -- Normal case, Out = full_punch_4
+                END AS tentative_out_full
+            FROM adjusted_punches
+        ),
+
+        in_out_gaps AS (
+            SELECT 
+                *,
+                -- Calculate the time difference in seconds between In and Out
+                CASE 
+                    WHEN tentative_in_full IS NOT NULL AND tentative_out_full IS NOT NULL 
+                    THEN (strftime('%s', tentative_out_full) - strftime('%s', tentative_in_full)) 
+                    ELSE 0 
+                END AS in_out_gap,
+                -- Determine if we need to skip the current Out (if gap < 1 hour = 3600 seconds)
+                CASE 
+                    WHEN tentative_in_full IS NOT NULL AND tentative_out_full IS NOT NULL 
+                         AND (strftime('%s', tentative_out_full) - strftime('%s', tentative_in_full)) < 3600 
+                    THEN 1  -- Skip current Out
+                    ELSE 0  -- Use current Out normally
+                END AS skip_current_out
+            FROM in_out_analysis
+        ),
+
+        final_punches AS (
+            SELECT 
+                employee_id,
+                punch_date,
+                punch_1 AS `Clock-In`,
+                CASE 
+                    WHEN skip_punch_2 = 1 THEN punch_3  -- Skip punch_2, use punch_3
+                    ELSE punch_2                        -- Use punch_2 normally
+                END AS `Clock-Out`,
+                tentative_in AS `In`,  -- In stays the same
+                -- Out: if we need to skip current out, use next punch
+                CASE 
+                    WHEN skip_current_out = 1 AND skip_punch_2 = 1 THEN punch_6   -- Skip punch_5, use punch_6
+                    WHEN skip_current_out = 1 AND skip_punch_2 = 0 THEN punch_5   -- Skip punch_4, use punch_5
+                    ELSE tentative_out                                           -- Use tentative_out normally
+                END AS `Out`,
+                clock_gap,     -- Debug: Clock-In to Clock-Out gap
+                in_out_gap,    -- Debug: In to Out gap
+                skip_punch_2,  -- Debug: Did we skip punch_2?
+                skip_current_out  -- Debug: Did we skip the original Out?
+            FROM in_out_gaps
+        ),
+
+        timetable_info AS (
+            SELECT 
+                ad.employee_id,
+                date(ad.att_date) AS att_date,
+                tt.timetable_name,
+                time(tt.timetable_start) AS StartWorkTime,
+                time(tt.timetable_end) AS EndWorkTime,
+                ROW_NUMBER() OVER (PARTITION BY ad.employee_id, date(ad.att_date) ORDER BY ad.id ASC) AS rn
+            FROM att_day_details ad
+            LEFT JOIN att_timetable tt ON ad.timetable_id = tt.id
+        ),
+
         final AS (
-            SELECT
+            SELECT DISTINCT
                 e.emp_pin AS employee_id,
                 e.emp_firstname || ' ' || COALESCE(e.emp_lastname, '') AS full_name,
                 d.dept_name AS department,
-                r.punch_date AS Date,
-                CASE strftime('%w', r.punch_date)
+                fp.punch_date AS Date,
+                CASE strftime('%w', fp.punch_date)
                     WHEN '0' THEN 'Sun.'
                     WHEN '1' THEN 'Mon.'
                     WHEN '2' THEN 'Tues.'
@@ -93,19 +228,31 @@ async def generate_attendance_report(
                     WHEN '5' THEN 'Fri.'
                     WHEN '6' THEN 'Sat.'
                 END AS Workday,
-                tt.timetable_name AS Timetable,
-                time(tt.timetable_start) AS StartWorkTime,
-                time(tt.timetable_end) AS EndWorkTime,
-                MAX(CASE WHEN r.rn = 1 THEN r.punch_time END) AS `Clock-In`,
-                MAX(CASE WHEN r.rn = 2 THEN r.punch_time END) AS `Clock-Out`,
-                MAX(CASE WHEN r.rn = 3 THEN r.punch_time END) AS `In`,
-                MAX(CASE WHEN r.rn = 4 THEN r.punch_time END) AS `Out`
-            FROM ranked_punches r
-            JOIN hr_employee e ON e.id = r.employee_id
+                CASE 
+                    WHEN ti.timetable_name IS NOT NULL AND ti.StartWorkTime IS NOT NULL AND ti.EndWorkTime IS NOT NULL
+                    THEN ti.timetable_name || ' (' || ti.StartWorkTime || ' - ' || ti.EndWorkTime || ')'
+                    ELSE COALESCE(ti.timetable_name, '')
+                END AS Timetable,
+                COALESCE(ti.StartWorkTime, '') AS StartWorkTime,
+                COALESCE(ti.EndWorkTime, '') AS EndWorkTime,
+                -- For NIGHT timetables, use "In" as "Clock-In", otherwise use original "Clock-In"
+                CASE 
+                    WHEN UPPER(COALESCE(ti.timetable_name, '')) LIKE '%NIGHT%' THEN fp.`In`
+                    ELSE fp.`Clock-In`
+                END AS `Clock-In`,
+                fp.`Clock-Out`,
+                -- For NIGHT timetables, set "In" to NULL since we moved it to "Clock-In"
+                CASE 
+                    WHEN UPPER(COALESCE(ti.timetable_name, '')) LIKE '%NIGHT%' THEN NULL
+                    ELSE fp.`In`
+                END AS `In`,
+                fp.`Out`
+            FROM final_punches fp
+            JOIN hr_employee e ON e.id = fp.employee_id
             LEFT JOIN hr_department d ON e.department_id = d.id
-            LEFT JOIN att_day_details ad ON ad.employee_id = r.employee_id AND date(ad.att_date) = r.punch_date
-            LEFT JOIN att_timetable tt ON ad.timetable_id = tt.id
-            GROUP BY e.emp_pin, e.emp_firstname, e.emp_lastname, d.dept_name, r.punch_date, tt.timetable_name, tt.timetable_start, tt.timetable_end
+            LEFT JOIN timetable_info ti ON ti.employee_id = fp.employee_id 
+                                        AND ti.att_date = fp.punch_date 
+                                        AND ti.rn = 1  -- Only take the first timetable entry per day
         ),
 
         with_flags AS (
@@ -541,54 +688,22 @@ def generate_excel_report(df, company_name, start_date, end_date, public_holiday
                 else:
                     cell_value = row.get(col_name, "")
                 
-                # Handle OT redistribution for public holidays and convert to decimal format
-                if col_name in ['OT1', 'OT2', 'OT3']:
+                # Convert OT time values to decimal format
+                if col_name in ['OT1', 'OT2', 'OT3'] and cell_value:
                     # Convert "hh:mm" to decimal (e.g., "02:30" -> "2.5")
                     def time_to_decimal(time_str):
                         if not time_str or time_str in ['', '0:00', '00:00']:
-                            return 0.0
+                            return '0.0'
                         try:
                             parts = time_str.split(':')
                             hours = int(parts[0])
                             minutes = int(parts[1])
                             decimal_value = hours + (minutes / 60.0)
-                            return decimal_value
+                            return f"{decimal_value:.2f}".rstrip('0').rstrip('.')
                         except:
-                            return 0.0
+                            return cell_value
                     
-                    # Get original OT values for redistribution
-                    if not hasattr(row, '_ot_redistributed'):
-                        # Calculate redistribution only once per row
-                        ot1_decimal = time_to_decimal(row.get('OT1', ''))
-                        ot2_decimal = time_to_decimal(row.get('OT2', ''))
-                        ot3_decimal = time_to_decimal(row.get('OT3', ''))
-                        
-                        if is_public_holiday:
-                            # Move OT1 and OT2 to OT3 on public holidays
-                            row._redistributed_ot1 = 0.0
-                            row._redistributed_ot2 = 0.0
-                            row._redistributed_ot3 = ot1_decimal + ot2_decimal + ot3_decimal
-                        else:
-                            # Keep original values
-                            row._redistributed_ot1 = ot1_decimal
-                            row._redistributed_ot2 = ot2_decimal
-                            row._redistributed_ot3 = ot3_decimal
-                        
-                        row._ot_redistributed = True
-                    
-                    # Set cell value based on redistribution
-                    if col_name == 'OT1':
-                        decimal_value = row._redistributed_ot1
-                    elif col_name == 'OT2':
-                        decimal_value = row._redistributed_ot2
-                    elif col_name == 'OT3':
-                        decimal_value = row._redistributed_ot3
-                    
-                    # Format as string
-                    if decimal_value > 0:
-                        cell_value = f"{decimal_value:.2f}".rstrip('0').rstrip('.')
-                    else:
-                        cell_value = '0.0'
+                    cell_value = time_to_decimal(cell_value)
                 
                 cell = ws.cell(row=current_row, column=col_idx, value=cell_value)
                 
@@ -724,50 +839,21 @@ def generate_excel_report(df, company_name, start_date, end_date, public_holiday
                         total_day_cell.font = tahoma_font
                         total_day_cell.fill = green_fill
                     elif col_name in ['OT1', 'OT2', 'OT3']:
-                        # For OT columns, sum the redistributed decimal values (considering public holidays)
+                        # For OT columns, sum the decimal values (converted from time)
                         total_ot = 0.0
                         for _, data_row in group.iterrows():
-                            # Check if this date is a public holiday
-                            row_date = str(data_row.get('Date', ''))
-                            is_holiday = row_date in public_holiday_set
-                            
-                            # Convert original OT values to decimal
-                            def time_to_decimal_total(time_str):
-                                if not time_str or time_str in ['', '0:00', '00:00']:
-                                    return 0.0
+                            ot_value = data_row.get(col_name, "")
+                            if ot_value and ot_value not in ['', '0:00', '00:00']:
+                                # Convert time to decimal for summing
                                 try:
-                                    parts = time_str.split(':')
+                                    parts = ot_value.split(':')
                                     hours = int(parts[0])
                                     minutes = int(parts[1])
-                                    return hours + (minutes / 60.0)
+                                    decimal_value = hours + (minutes / 60.0)
+                                    total_ot += decimal_value
                                 except:
-                                    return 0.0
-                            
-                            ot1_value = time_to_decimal_total(data_row.get('OT1', ''))
-                            ot2_value = time_to_decimal_total(data_row.get('OT2', ''))
-                            ot3_value = time_to_decimal_total(data_row.get('OT3', ''))
-                            
-                            if is_holiday:
-                                # On public holidays, OT1 and OT2 go to OT3
-                                if col_name == 'OT1':
-                                    total_ot += 0.0  # OT1 becomes 0 on holidays
-                                elif col_name == 'OT2':
-                                    total_ot += 0.0  # OT2 becomes 0 on holidays
-                                elif col_name == 'OT3':
-                                    total_ot += ot1_value + ot2_value + ot3_value  # All OT goes to OT3
-                            else:
-                                # Normal days, use original values
-                                if col_name == 'OT1':
-                                    total_ot += ot1_value
-                                elif col_name == 'OT2':
-                                    total_ot += ot2_value
-                                elif col_name == 'OT3':
-                                    total_ot += ot3_value
-                        
-                        if total_ot > 0:
-                            ot_cell = ws.cell(row=current_row, column=col_idx, value=f"{total_ot:.2f}".rstrip('0').rstrip('.'))
-                        else:
-                            ot_cell = ws.cell(row=current_row, column=col_idx, value="0.0")
+                                    pass
+                        ot_cell = ws.cell(row=current_row, column=col_idx, value=f"{total_ot:.2f}".rstrip('0').rstrip('.'))
                         ot_cell.font = tahoma_font
                         ot_cell.fill = green_fill
                 else:
@@ -815,14 +901,37 @@ def generate_excel_report(df, company_name, start_date, end_date, public_holiday
     
     return filename
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    """Root endpoint with API information"""
+    """Serve the HTML upload form"""
+    try:
+        with open("upload_form.html", "r", encoding="utf-8") as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    except FileNotFoundError:
+        return HTMLResponse(content="""
+        <html>
+            <body>
+                <h1>Attendance Report Generator API</h1>
+                <p>Upload form not found. Please use the API endpoints directly:</p>
+                <ul>
+                    <li><strong>POST /generate-attendance-report</strong>: Generate Excel attendance report</li>
+                    <li><strong>GET /docs</strong>: Interactive API documentation</li>
+                </ul>
+            </body>
+        </html>
+        """)
+
+@app.get("/api")
+async def api_info():
+    """API information endpoint"""
     return {
         "message": "Attendance Report Generator API",
         "version": "1.0.0",
         "endpoints": {
-            "POST /generate-attendance-report": "Generate Excel attendance report from ZK.db file"
+            "GET /": "Web interface for uploading files",
+            "POST /generate-attendance-report": "Generate Excel attendance report from ZK.db file",
+            "GET /docs": "Interactive API documentation"
         }
     }
 
