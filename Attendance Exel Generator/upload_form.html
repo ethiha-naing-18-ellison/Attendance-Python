@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance Data Sheet Generator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+            text-align: center;
+        }
+
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .info-box {
+            background: #f8f9ff;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 30px;
+            border-radius: 5px;
+        }
+
+        .info-box h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .info-box p {
+            color: #555;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .columns-display {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .column-badge {
+            background: #667eea;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        input[type="file"],
+        input[type="date"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        input[type="file"]:focus,
+        input[type="date"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .date-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        button {
+            width: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .progress-bar {
+            display: none;
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            margin-top: 20px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s;
+            animation: progress 2s infinite;
+        }
+
+        @keyframes progress {
+            0% { width: 0%; }
+            50% { width: 100%; }
+            100% { width: 0%; }
+        }
+
+        .message {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+            text-align: center;
+        }
+
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .download-link {
+            display: inline-block;
+            margin-top: 10px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .download-link:hover {
+            text-decoration: underline;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #888;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Attendance Data Sheet Generator</h1>
+        <p class="subtitle">Generate Excel file with raw punch data</p>
+
+        <div class="info-box">
+            <h3>📋 Output Columns:</h3>
+            <div class="columns-display">
+                <span class="column-badge">Employee ID</span>
+                <span class="column-badge">Name</span>
+                <span class="column-badge">In</span>
+                <span class="column-badge">Out</span>
+                <span class="column-badge">In</span>
+                <span class="column-badge">Out</span>
+                <span class="column-badge">In</span>
+                <span class="column-badge">Out</span>
+            </div>
+            <p style="margin-top: 10px; font-size: 13px;">
+                ✨ Only raw punch data • No calculations • Simple format
+            </p>
+        </div>
+
+        <form id="uploadForm">
+            <div class="form-group">
+                <label for="db_file">📁 Select ZK.db Database File *</label>
+                <input type="file" id="db_file" name="db_file" accept=".db" required>
+            </div>
+
+            <div class="form-group">
+                <label>📅 Date Range *</label>
+                <div class="date-group">
+                    <div>
+                        <label for="start_date" style="font-weight: normal; font-size: 12px;">Start Date</label>
+                        <input type="date" id="start_date" name="start_date" required>
+                    </div>
+                    <div>
+                        <label for="end_date" style="font-weight: normal; font-size: 12px;">End Date (Optional)</label>
+                        <input type="date" id="end_date" name="end_date">
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" id="submitBtn">
+                Generate Data Sheet
+            </button>
+
+            <div class="progress-bar" id="progressBar">
+                <div class="progress-fill"></div>
+            </div>
+
+            <div class="message" id="message"></div>
+        </form>
+
+        <div class="footer">
+            <p>Attendance Data Sheet Generator v1.0.0</p>
+            <p><a href="/docs" style="color: #667eea;">API Documentation</a></p>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const submitBtn = document.getElementById('submitBtn');
+            const progressBar = document.getElementById('progressBar');
+            const message = document.getElementById('message');
+
+            // Disable submit button
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Generating...';
+            progressBar.style.display = 'block';
+            message.style.display = 'none';
+
+            const formData = new FormData();
+            formData.append('db_file', document.getElementById('db_file').files[0]);
+            formData.append('start_date', document.getElementById('start_date').value);
+            
+            const endDate = document.getElementById('end_date').value;
+            if (endDate) {
+                formData.append('end_date', endDate);
+            }
+
+            try {
+                const response = await fetch('/generate-data-sheet', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `attendance_data_${document.getElementById('start_date').value}.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+
+                    message.className = 'message success';
+                    message.textContent = '✅ Data sheet generated successfully! Download started.';
+                    message.style.display = 'block';
+                } else {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to generate report');
+                }
+            } catch (error) {
+                message.className = 'message error';
+                message.textContent = '❌ Error: ' + error.message;
+                message.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Generate Data Sheet';
+                progressBar.style.display = 'none';
+            }
+        });
+
+        // Set today's date as default
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('start_date').value = today;
+    </script>
+</body>
+</html>
+
