@@ -48,7 +48,7 @@ async def generate_data_sheet(
         # Connect to the temporary database
         conn = sqlite3.connect(temp_db_path)
         
-        # Get raw punch data with 5-minute rule (filters duplicate punches)
+        # Get raw punch data with 10-minute rule (filters duplicate punches)
         raw_punch_query = f"""
         WITH punches_per_day AS (
             SELECT 
@@ -93,34 +93,34 @@ async def generate_data_sheet(
                 employee_id,
                 punch_date,
                 punch_1,
-                -- Apply 5-minute rule: if punch_2 is less than 5 minutes after punch_1, skip it
+                -- Apply 10-minute rule: if punch_2 is less than 10 minutes after punch_1, skip it
                 CASE 
                     WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
-                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 600
                     THEN punch_3  -- Skip punch_2, use punch_3 instead
                     ELSE punch_2  -- Use punch_2 normally
                 END AS punch_2,
                 CASE 
                     WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
-                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 600
                     THEN punch_4  -- Shift punch_4 to position 3
                     ELSE punch_3  -- Use punch_3 normally
                 END AS punch_3,
                 CASE 
                     WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
-                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 600
                     THEN punch_5  -- Shift punch_5 to position 4
                     ELSE punch_4  -- Use punch_4 normally
                 END AS punch_4,
                 CASE 
                     WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
-                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 600
                     THEN punch_6  -- Shift punch_6 to position 5
                     ELSE punch_5  -- Use punch_5 normally
                 END AS punch_5,
                 CASE 
                     WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
-                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 600
                     THEN punch_7  -- Shift punch_7 to position 6
                     ELSE punch_6  -- Use punch_6 normally
                 END AS punch_6
