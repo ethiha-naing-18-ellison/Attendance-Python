@@ -8,6 +8,9 @@ This is a STANDALONE project that generates simple Excel files with raw punch
 data only. It is separate from the main attendance system but can reference the
 same database files.
 
+🕐 5-MINUTE RULE: Automatically filters out duplicate punches that occur within
+5 minutes of each other (e.g., 08:30 and 08:31 are only 1 min apart).
+
 🎯 PURPOSE
 ───────────────────────────────────────────────────────────────────────────────
 Generate simple Excel files showing:

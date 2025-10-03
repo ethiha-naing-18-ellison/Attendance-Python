@@ -59,9 +59,20 @@ An Excel file with ONE sheet called "Data":
 - ✅ Company name at top
 - ✅ Date range shown
 - ✅ Raw punch times (no calculations)
+- ✅ **5-Minute Rule**: Auto-filters duplicate punches
 - ✅ Sunday rows in yellow
 - ✅ Professional formatting
 - ✅ Clean and simple
+
+### 🕐 What's the 5-Minute Rule?
+
+If first "In" and "Out" are less than 5 minutes apart, the system skips that "Out" (duplicate punch) and shifts remaining punches forward.
+
+**Example:**
+- Before: `In: 08:30, Out: 08:31` ❌ (only 1 min)
+- After: `In: 08:30, Out: (next valid punch)` ✅
+
+See `5_MINUTE_RULE_EXPLAINED.md` for full details!
 
 ## ⚡ Pro Tips
 

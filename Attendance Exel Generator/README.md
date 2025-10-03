@@ -6,6 +6,7 @@ A standalone FastAPI application that generates Excel files with **raw punch dat
 
 - 📄 **Single Sheet Output**: Generates only the "Data" sheet
 - 🎯 **Simple Format**: Employee ID, Name, and up to 6 punch times (3 In/Out pairs)
+- 🕐 **5-Minute Rule**: Automatically filters duplicate punches (removes false punches < 5 min apart)
 - 🌟 **Clean Design**: No calculations, just raw punch data
 - 🎨 **Professional Styling**: 
   - Tahoma font
@@ -223,6 +224,26 @@ This API is designed for **internal use**. For production:
 - Add file size limits
 - Use HTTPS
 - Validate all inputs
+
+## 🕐 5-Minute Rule (Duplicate Filter)
+
+The system automatically detects and removes duplicate punches that occur within 5 minutes of each other.
+
+### Example:
+
+**Before filtering:**
+```
+In: 08:30, Out: 08:32 (only 2 minutes - duplicate!)
+```
+
+**After filtering:**
+```
+In: 08:30, Out: (shifts to next valid punch)
+```
+
+This prevents false duplicate entries when employees accidentally punch multiple times.
+
+📖 **For detailed explanation**, see: `5_MINUTE_RULE_EXPLAINED.md`
 
 ## 📦 Dependencies
 

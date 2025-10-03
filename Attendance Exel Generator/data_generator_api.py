@@ -48,7 +48,7 @@ async def generate_data_sheet(
         # Connect to the temporary database
         conn = sqlite3.connect(temp_db_path)
         
-        # Get raw punch data (up to 7 punches per day)
+        # Get raw punch data with 5-minute rule (filters duplicate punches)
         raw_punch_query = f"""
         WITH punches_per_day AS (
             SELECT 
@@ -69,22 +69,78 @@ async def generate_data_sheet(
                 p.full_punch_time,
                 ROW_NUMBER() OVER (PARTITION BY p.employee_id, p.punch_date ORDER BY p.full_punch_time ASC) AS rn
             FROM punches_per_day p
+        ),
+        
+        initial_punches AS (
+            SELECT 
+                employee_id,
+                punch_date,
+                MAX(CASE WHEN rn = 1 THEN punch_time END) AS punch_1,
+                MAX(CASE WHEN rn = 2 THEN punch_time END) AS punch_2,
+                MAX(CASE WHEN rn = 3 THEN punch_time END) AS punch_3,
+                MAX(CASE WHEN rn = 4 THEN punch_time END) AS punch_4,
+                MAX(CASE WHEN rn = 5 THEN punch_time END) AS punch_5,
+                MAX(CASE WHEN rn = 6 THEN punch_time END) AS punch_6,
+                MAX(CASE WHEN rn = 7 THEN punch_time END) AS punch_7,
+                MAX(CASE WHEN rn = 1 THEN full_punch_time END) AS full_punch_1,
+                MAX(CASE WHEN rn = 2 THEN full_punch_time END) AS full_punch_2
+            FROM ranked_punches
+            GROUP BY employee_id, punch_date
+        ),
+        
+        filtered_punches AS (
+            SELECT 
+                employee_id,
+                punch_date,
+                punch_1,
+                -- Apply 5-minute rule: if punch_2 is less than 5 minutes after punch_1, skip it
+                CASE 
+                    WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                    THEN punch_3  -- Skip punch_2, use punch_3 instead
+                    ELSE punch_2  -- Use punch_2 normally
+                END AS punch_2,
+                CASE 
+                    WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                    THEN punch_4  -- Shift punch_4 to position 3
+                    ELSE punch_3  -- Use punch_3 normally
+                END AS punch_3,
+                CASE 
+                    WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                    THEN punch_5  -- Shift punch_5 to position 4
+                    ELSE punch_4  -- Use punch_4 normally
+                END AS punch_4,
+                CASE 
+                    WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                    THEN punch_6  -- Shift punch_6 to position 5
+                    ELSE punch_5  -- Use punch_5 normally
+                END AS punch_5,
+                CASE 
+                    WHEN full_punch_1 IS NOT NULL AND full_punch_2 IS NOT NULL 
+                         AND (strftime('%s', full_punch_2) - strftime('%s', full_punch_1)) < 300
+                    THEN punch_7  -- Shift punch_7 to position 6
+                    ELSE punch_6  -- Use punch_6 normally
+                END AS punch_6
+            FROM initial_punches
         )
         
         SELECT 
             e.emp_pin AS employee_id,
             e.emp_firstname || ' ' || COALESCE(e.emp_lastname, '') AS full_name,
-            rp.punch_date AS Date,
-            MAX(CASE WHEN rn = 1 THEN rp.punch_time END) AS punch_1,
-            MAX(CASE WHEN rn = 2 THEN rp.punch_time END) AS punch_2,
-            MAX(CASE WHEN rn = 3 THEN rp.punch_time END) AS punch_3,
-            MAX(CASE WHEN rn = 4 THEN rp.punch_time END) AS punch_4,
-            MAX(CASE WHEN rn = 5 THEN rp.punch_time END) AS punch_5,
-            MAX(CASE WHEN rn = 6 THEN rp.punch_time END) AS punch_6,
-            MAX(CASE WHEN rn = 7 THEN rp.punch_time END) AS punch_7
-        FROM ranked_punches rp
-        JOIN hr_employee e ON e.id = rp.employee_id
-        GROUP BY e.emp_pin, e.emp_firstname, e.emp_lastname, rp.punch_date
+            fp.punch_date AS Date,
+            fp.punch_1,
+            fp.punch_2,
+            fp.punch_3,
+            fp.punch_4,
+            fp.punch_5,
+            fp.punch_6
+        FROM filtered_punches fp
+        JOIN hr_employee e ON e.emp_pin = (
+            SELECT emp_pin FROM hr_employee WHERE id = fp.employee_id LIMIT 1
+        )
         ORDER BY employee_id, Date;
         """
         

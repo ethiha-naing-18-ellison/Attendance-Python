@@ -21,6 +21,7 @@ Generates Excel files with ONE sheet called "Data" containing:
 
 • NO calculations (no OT, no Late, no penalties)
 • Just RAW punch times from the database
+• 🕐 5-MINUTE RULE: Auto-filters duplicate punches
 • Simple and clean format
 • Professional styling
 
@@ -43,10 +44,11 @@ Generates Excel files with ONE sheet called "Data" containing:
 │ 📚 DOCUMENTATION FILES                                                     │
 └────────────────────────────────────────────────────────────────────────────┘
 
-  📄 QUICK_START.md    → Fast setup guide (read this first!)
-  📄 README.md         → Complete documentation
-  📄 PROJECT_INFO.txt  → Project details and comparison
-  📄 START_HERE.txt    → This file
+  📄 QUICK_START.md                → Fast setup guide (read this first!)
+  📄 README.md                     → Complete documentation
+  📄 5_MINUTE_RULE_EXPLAINED.md    → Duplicate filter explanation
+  📄 PROJECT_INFO.txt              → Project details and comparison
+  📄 START_HERE.txt                → This file
 
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ 📁 PROJECT FILES                                                           │
@@ -111,12 +113,25 @@ Generates Excel files with ONE sheet called "Data" containing:
 
   ✅ Simple Excel output (Data sheet only)
   ✅ Raw punch times (no calculations)
+  ✅ 🕐 5-Minute Rule (auto-filters duplicate punches)
   ✅ Professional formatting
   ✅ Beautiful web interface
   ✅ Fast API
   ✅ Easy to use
   ✅ Standalone project
   ✅ Well documented
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 🕐 5-MINUTE RULE QUICK INFO                                                │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  Automatically removes duplicate punches that are less than 5 minutes apart!
+
+  Example:
+    Before: In 08:30 → Out 08:31 (❌ only 1 min, duplicate!)
+    After:  In 08:30 → Out (shifts to next real punch) ✅
+
+  📖 Full details: See 5_MINUTE_RULE_EXPLAINED.md
 
 ╔════════════════════════════════════════════════════════════════════════════╗
 ║                                                                            ║
